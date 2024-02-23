@@ -1,0 +1,91 @@
+pipeline {
+    agent any
+    
+    tools {
+        maven 'maven3'
+        jdk 'jdk17'
+    }
+    environment {
+        SCANNER_HOME= tool 'sonar-scanner'
+    }
+
+    stages {
+        stage('git checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/manojnetha/Ekart.git'
+            }
+        }
+        stage('compile') {
+            steps {
+                sh "mvn compile"
+            }
+        }
+        stage('Jnit Tests') {
+            steps {
+                sh "mvn test -DskipTests=true"
+            }
+        }
+        stage('SonarQube Analasys') {
+            steps {
+                withSonarQubeEnv(installationName: 'sonar-scanner', credentialsId: 'sonar-secret-text') {
+                    sh '''$SCANNER_HOME/bin/sonar-scanner -Dsonar.projectKey=EKART -Dsonar.projectName=EKART \
+                    -Dsonar.java.binaries=. '''
+}
+            }
+        }
+        stage('OWASP dependency check') {
+            steps {
+                dependencyCheck additionalArguments: ' --scan ./', odcInstallation: 'DP-Check'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+            }
+        }
+        stage('maven build') {
+            steps {
+                sh "mvn package -DskipTests=true"
+            }
+        }
+        stage('deploy to nexus') {
+            steps {
+                withMaven(globalMavenSettingsConfig: 'global-maven', jdk: 'jdk17', maven: 'maven3', mavenSettingsConfig: '', traceability: true) {
+                    sh "mvn deploy -DskipTests=True"
+                }
+            }
+        }
+        stage('docker build & tag image') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                        sh "docker build -t manojmanoj1122334455/ekart:latest -f docker/Dockerfile ."
+                    }
+                }
+            }
+        }
+        stage('trivy scan') {
+            steps {
+                sh "trivy image manojmanoj1122334455/ekart:latest --skip-java-db-update> trivy-report.txt"
+            }
+        }
+        stage('docker image push') {
+            steps {
+                script {
+                    withDockerRegistry(credentialsId: 'docker-cred', toolName: 'docker') {
+                        sh "docker push manojmanoj1122334455/ekart:latest"
+                    }
+                }
+            }
+        }
+        stage('kubernetes deploy') {
+            steps {
+                withKubeConfig(caCertificate: '', clusterName: '', contextName: '', credentialsId: 'jenkins-kubernetes-credentials', namespace: 'webapps', restrictKubeConfigAccess: false, serverUrl: 'https://127.0.0.1:32769') {
+                    sh '''kubectl apply -f deploymentservice.yml -n webapps'''
+                }
+            }
+        }
+        
+        
+        
+        
+        
+        
+    }
+}
